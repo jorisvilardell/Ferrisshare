@@ -47,15 +47,15 @@ The protocol defines a simple, **text-based command layer** over TCP for transfe
 
 ### **Protocol Commands**
 
-| Command                  | Sender | Arguments                                  | Response                   | Description                                                                                      |
-| ------------------------ | ------ | ------------------------------------------ | -------------------------- | ------------------------------------------------------------------------------------------------ |
-| **HELLO**                | Client | `<filename> <filesize>`                    | `OK` / `NOPE <reason>`     | Initiates the file transfer and informs the receiver about the file name and size.               |
-| **OK**                   | Server | —                                          | —                          | Confirms acceptance of the file transfer.                                                        |
-| **NOPE**                 | Server | `<reason>`                                 | —                          | Refuses the transfer (e.g., file exists, insufficient space).                                    |
-| **YEET**                 | Client | `<block_index> <block_size>` + binary data | `OK-HOUSTEN <block_index>` | Sends one block of the file to the receiver. Blocks are fixed or variable size.                  |
-| **OK-HOUSTEN**           | Server | `<block_index>`                            | —                          | Confirms the block was received and written correctly. Optional but recommended for integrity.   |
-| **MISSION-ACCOMPLISHED** | Client | —                                          | `SUCCESS` / `ERROR`        | Marks the end of file transmission. The server verifies that all blocks were received correctly. |
-| **BYE-RIS**              | Either | —                                          | —                          | Gracefully terminates or cancels the transfer.                                                   |
+| Command                  | Sender | Arguments                                              | Response                   | Description                                                                                      |
+| ------------------------ | ------ | ------------------------------------------------------ | -------------------------- | ------------------------------------------------------------------------------------------------ |
+| **HELLO**                | Client | `<filename> <filesize>`                                | `OK` / `NOPE <reason>`     | Initiates the file transfer and informs the receiver about the file name and size.               |
+| **OK**                   | Server | —                                                      | —                          | Confirms acceptance of the file transfer.                                                        |
+| **NOPE**                 | Server | `<reason>`                                             | —                          | Refuses the transfer (e.g., file exists, insufficient space).                                    |
+| **YEET**                 | Client | `<block_index> <block_size> <check_sum>` + binary data | `OK-HOUSTEN <block_index>` | Sends one block of the file to the receiver. Blocks are fixed or variable size.                  |
+| **OK-HOUSTEN**           | Server | `<block_index>`                                        | —                          | Confirms the block was received and written correctly. Optional but recommended for integrity.   |
+| **MISSION-ACCOMPLISHED** | Client | —                                                      | `SUCCESS` / `ERROR`        | Marks the end of file transmission. The server verifies that all blocks were received correctly. |
+| **BYE-RIS**              | Either | —                                                      | —                          | Gracefully terminates or cancels the transfer.                                                   |
 
 ### **Notes**
 
