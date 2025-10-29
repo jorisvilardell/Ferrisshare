@@ -135,3 +135,36 @@ impl From<ProtocolError> for String {
         }
     }
 }
+
+#[derive(Debug)]
+pub enum NetworkError {
+    ListenerBindFailed(std::io::Error),
+    TransferInterrupted,
+    TooManyConnections,
+    ConnectionLost,
+    Timeout,
+    InvalidData,
+    ProtocolError(ProtocolError),
+}
+
+impl From<ProtocolError> for NetworkError {
+    fn from(err: ProtocolError) -> Self {
+        NetworkError::ProtocolError(err)
+    }
+}
+
+impl From<NetworkError> for String {
+    fn from(err: NetworkError) -> Self {
+        match err {
+            NetworkError::ListenerBindFailed(e) => {
+                format!("ERROR Listener bind failed: {}", e)
+            }
+            NetworkError::TransferInterrupted => "ERROR Transfer interrupted".to_string(),
+            NetworkError::TooManyConnections => "ERROR Too many connections".to_string(),
+            NetworkError::ConnectionLost => "ERROR Connection lost".to_string(),
+            NetworkError::Timeout => "ERROR Timeout occurred".to_string(),
+            NetworkError::InvalidData => "ERROR Invalid data received".to_string(),
+            NetworkError::ProtocolError(proto_err) => String::from(proto_err),
+        }
+    }
+}
