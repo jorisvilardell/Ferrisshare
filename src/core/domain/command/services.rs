@@ -28,7 +28,7 @@ impl CommandService for CommandServiceImpl {
                 check_sum,
             } => {
                 // Logique pour gérer la réception d'un bloc de données
-                Ok(ProtocolMessage::OkHousten(1024))
+                Ok(ProtocolMessage::OkHousten(block_index.clone()))
             }
             // ... autres commandes
             _ => Err(CommandError::InvalidCommand),
