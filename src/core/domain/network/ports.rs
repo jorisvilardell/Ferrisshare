@@ -15,9 +15,9 @@ pub trait NetworkService {
     fn handler(&self, rx: Receiver<TcpStream>) -> impl Future<Output = Result<(), Error>> + Send;
     fn send_message(
         &self,
-        stream: &TcpStream,
-        message: &ProtocolMessage,
-    ) -> Result<(), ProtocolError>;
+        stream: &mut TcpStream,
+        message: ProtocolMessage,
+    ) -> impl Future<Output = Result<(), ProtocolError>> + Send;
 }
 
 pub trait NetworkClient {

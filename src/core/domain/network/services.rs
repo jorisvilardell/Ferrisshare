@@ -1,7 +1,10 @@
 use std::io::Error;
+use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 
 use tokio::io::AsyncBufReadExt;
 use tokio::io::AsyncReadExt;
+use tokio::io::AsyncWriteExt;
 use tokio::io::BufReader;
 use tokio::net::TcpListener;
 use tokio::net::TcpStream;
@@ -15,26 +18,30 @@ use crate::core::domain::network::entities::ProtocolError;
 use crate::core::domain::network::entities::ProtocolMessage;
 use crate::core::domain::network::ports::NetworkService;
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Clone)]
 pub struct NetworkServiceImpl<C>
 where
     C: CommandService,
 {
     command_service: C,
+    active: Arc<AtomicBool>,
 }
 
 impl<C> NetworkServiceImpl<C>
 where
-    C: CommandService,
+    C: CommandService + Clone + Send + Sync + 'static,
 {
     pub fn new(command_service: C) -> Self {
-        NetworkServiceImpl { command_service }
+        NetworkServiceImpl {
+            command_service,
+            active: Arc::new(AtomicBool::new(false)),
+        }
     }
 }
 
 impl<C> NetworkService for NetworkServiceImpl<C>
 where
-    C: CommandService,
+    C: CommandService + Clone + Send + Sync + 'static,
 {
     async fn listener(
         &self,
@@ -47,15 +54,31 @@ where
         println!("Listening on {}", addr);
 
         loop {
-            let (stream, addr) = listener
+            let (mut stream, addr) = listener
                 .accept()
                 .await
                 .map_err(|_| NetworkError::ConnectionLost)?;
             println!("New connection from {}", addr);
 
+            // Vérifie si une connexion est déjà active
+            if !self.active.load(std::sync::atomic::Ordering::SeqCst) {
+                self.active.store(true, std::sync::atomic::Ordering::SeqCst);
+            } else {
+                eprintln!(
+                    "A connection is already active. Rejecting new connection from {}",
+                    addr
+                );
+                let _ = stream.shutdown().await;
+                continue;
+            }
+
             // Essaye d’envoyer la connexion au handler
-            if let Err(_) = tx.try_send(stream) {
-                println!("Connection refused: another one is active");
+            match tx.try_send(stream) {
+                Ok(_) => println!("Connection sent to handler."),
+                Err(e) => {
+                    eprintln!("Failed to send connection to handler: {}", e);
+                    // Optionally close the connection if it can't be handled
+                }
             }
         }
     }
@@ -93,7 +116,12 @@ where
                         match self.command_service.execute_protocol_command(&msg).await {
                             Ok(response) => {
                                 println!("Response: {:?}", response);
-                                // Here you would send the response back to the client
+                                // Clone the underlying TcpStream to avoid moving reader
+                                let mut stream_ref = reader.get_mut();
+                                match self.send_message(&mut stream_ref, response).await {
+                                    Ok(_) => println!("Response sent successfully."),
+                                    Err(e) => eprintln!("Failed to send response: {:?}", e),
+                                }
                             }
                             Err(e) => {
                                 println!("Command execution error: {:?}", e);
@@ -115,11 +143,15 @@ where
         Ok(())
     }
 
-    fn send_message(
+    async fn send_message(
         &self,
-        stream: &TcpStream,
-        message: &ProtocolMessage,
+        stream: &mut TcpStream,
+        message: ProtocolMessage,
     ) -> Result<(), ProtocolError> {
-        todo!()
+        let msg_str = String::from(message) + "\n";
+        if let Err(e) = stream.write_all(msg_str.as_bytes()).await {
+            eprintln!("Failed to send message: {}", e);
+        }
+        Ok(())
     }
 }
