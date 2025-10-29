@@ -1,6 +1,8 @@
 use std::convert::TryFrom;
 use std::io::{self, BufRead};
 
+use clap::error;
+
 mod core;
 
 fn main() {
@@ -27,8 +29,16 @@ fn main() {
         }
 
         match ProtocolMessage::try_from(trimmed.as_str()) {
-            Ok(msg) => println!("Parsed => {:?}", msg),
-            Err(err) => println!("Parse error => {:?}", err),
+            Ok(msg) => {
+                println!("Parsed => {:?}", msg);
+                let response: String = String::from(msg);
+                println!("Response => {}", response);
+            }
+            Err(err) => {
+                println!("Parse error => {:?}", err);
+                let error_response = String::from(err);
+                println!("Error response => {}", error_response);
+            }
         }
     }
 }
