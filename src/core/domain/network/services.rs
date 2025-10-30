@@ -22,7 +22,7 @@ pub struct NetworkServiceImpl<C>
 where
     C: CommandService,
 {
-    command_service: C,
+    pub command_service: C,
     active: Arc<AtomicBool>,
     transfer_state: Arc<Mutex<TransferState>>,
 }
