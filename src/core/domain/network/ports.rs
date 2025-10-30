@@ -12,7 +12,7 @@ pub trait NetworkService {
         addr: &str,
         tx: Sender<TcpStream>,
     ) -> impl Future<Output = Result<(), NetworkError>> + Send;
-    fn handler(&self, rx: Receiver<TcpStream>) -> impl Future<Output = Result<(), Error>> + Send;
+    fn handler(&self, rx: Receiver<TcpStream>) -> impl Future<Output = Result<(), Error>>;
     fn trust_protocol(
         &self,
         stream: &mut TcpStream,

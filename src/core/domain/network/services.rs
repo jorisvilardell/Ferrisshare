@@ -133,59 +133,38 @@ where
                                 .send_message(stream_ref, ProtocolMessage::Error(String::from(e)))
                                 .await;
                         }
-                    }
-                    Err(e) => {
-                        let mut state_guard = self.transfer_state.lock().await;
-                        let was_receiving = match &mut *state_guard {
-                            TransferState::Receiving {
-                                expected_blocks,
-                                focused_block,
-                                received_blocks,
-                            } => {
-                                println!(
-                                    "In Receiving Binary from YeetBlock: expected_blocks={}, focused_block={:?}, received_blocks={:?}, binary data={}",
-                                    expected_blocks, focused_block, received_blocks, line
-                                );
 
-                                // TODO: Implement storage of binary data block here
+                        let guard = self.transfer_state.lock().await;
+                        match *guard {
+                            TransferState::Closed => {
+                                println!("Closing connection.");
+                                self.active
+                                    .store(false, std::sync::atomic::Ordering::SeqCst);
+                                drop(guard);
 
-                                if let Some(focused_block) = focused_block {
-                                    if received_blocks.contains(&focused_block.index) {
-                                        println!(
-                                            "Block {} already received, ignoring.",
-                                            focused_block.index
-                                        );
-                                    } else {
-                                        println!("Stored binary data block: {:?}", focused_block);
-                                        received_blocks.push(focused_block.index);
-                                        *state_guard = TransferState::Receiving {
-                                            expected_blocks: *expected_blocks,
-                                            focused_block: None,
-                                            received_blocks: received_blocks.clone(),
-                                        };
-                                    }
-                                } else {
-                                    println!("No focused block to store data for.");
-                                }
+                                self.reset_transfer_state().await;
+                                let _ = stream_ref.shutdown().await;
 
-                                drop(state_guard);
-
-                                true
+                                break;
                             }
-                            _ => false,
-                        };
-
-                        if !was_receiving {
-                            eprintln!("Failed to parse message: {:?}", e);
+                            _ => {
+                                continue;
+                            }
+                        }
+                    }
+                    Err(_) => {
+                        if let Err(e) = self
+                            .command_service
+                            .process_binary_data(Arc::clone(&self.transfer_state), &buf)
+                            .await
+                        {
+                            eprintln!("Error processing binary data: {:?}", e);
                             let _ = self
                                 .send_message(stream_ref, ProtocolMessage::Error(String::from(e)))
                                 .await;
                         }
                     }
                 }
-
-                println!("Received line: {}", line);
-                // handle msg here...
             }
         }
 
