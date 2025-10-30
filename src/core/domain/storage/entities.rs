@@ -21,6 +21,7 @@ pub struct File {
     pub size: u64,
 }
 
+#[derive(Debug)]
 pub enum StorageError {
     FileNotFound,
     PermissionDenied,
@@ -31,20 +32,20 @@ pub enum StorageError {
     Unknown(String),
 }
 
-impl std::fmt::Display for StorageError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            StorageError::FileNotFound => write!(f, "File not found"),
-            StorageError::PermissionDenied => write!(f, "Permission denied"),
-            StorageError::AlreadyExists => write!(f, "File already exists"),
+impl From<StorageError> for String {
+    fn from(error: StorageError) -> Self {
+        match error {
+            StorageError::FileNotFound => "File not found".into(),
+            StorageError::PermissionDenied => "Permission denied".into(),
+            StorageError::AlreadyExists => "File already exists".into(),
             StorageError::AbsolutePathNotAllowed => {
-                write!(f, "Absolute paths are not allowed in filenames")
+                "Absolute paths are not allowed in filenames".into()
             }
             StorageError::ParentDirSegmentNotAllowed => {
-                write!(f, "Parent directory segments are not allowed in filenames")
+                "Parent directory segments are not allowed in filenames".into()
             }
-            StorageError::InvalidFilename => write!(f, "Invalid filename"),
-            StorageError::Unknown(msg) => write!(f, "Unknown storage error: {}", msg),
+            StorageError::InvalidFilename => "Invalid filename".into(),
+            StorageError::Unknown(msg) => format!("Unknown storage error: {}", msg),
         }
     }
 }
