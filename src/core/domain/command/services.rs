@@ -1,6 +1,8 @@
+use std::sync::Arc;
+
 use crate::core::domain::{
     command::{entities::CommandError, ports::CommandService},
-    network::entities::ProtocolMessage,
+    network::entities::{ProtocolMessage, TransferState},
 };
 
 #[derive(Clone)]
@@ -15,6 +17,7 @@ impl CommandServiceImpl {
 impl CommandService for CommandServiceImpl {
     async fn execute_protocol_command(
         &self,
+        state: Arc<tokio::sync::Mutex<TransferState>>,
         msg: &ProtocolMessage,
     ) -> Result<ProtocolMessage, CommandError> {
         match msg {

@@ -118,7 +118,7 @@ impl From<ProtocolMessage> for String {
             ProtocolMessage::OkHousten(block_index) => format!("OK-HOUSTEN {}", block_index),
             ProtocolMessage::MissionAccomplished => "MISSION-ACCOMPLISHED".to_string(),
             ProtocolMessage::Success => "SUCCESS".to_string(),
-            ProtocolMessage::Error(reason) => format!("ERROR {}", reason),
+            ProtocolMessage::Error(reason) => format!("ERROR: {}", reason),
             ProtocolMessage::ByeRis => "BYE-RIS".to_string(),
         }
     }
@@ -127,11 +127,11 @@ impl From<ProtocolMessage> for String {
 impl From<ProtocolError> for String {
     fn from(err: ProtocolError) -> Self {
         match err {
-            ProtocolError::InvalidUtf8 => "ERROR Invalid UTF-8 sequence".to_string(),
-            ProtocolError::InvalidCommand => "ERROR Invalid command".to_string(),
-            ProtocolError::MissingArgs => "ERROR Missing arguments".to_string(),
-            ProtocolError::InvalidNumber => "ERROR Invalid number format".to_string(),
-            ProtocolError::Incomplete => "ERROR Incomplete command".to_string(),
+            ProtocolError::InvalidUtf8 => "Invalid UTF-8 sequence".to_string(),
+            ProtocolError::InvalidCommand => "Invalid command".to_string(),
+            ProtocolError::MissingArgs => "Missing arguments".to_string(),
+            ProtocolError::InvalidNumber => "Invalid number format".to_string(),
+            ProtocolError::Incomplete => "Incomplete command".to_string(),
         }
     }
 }
