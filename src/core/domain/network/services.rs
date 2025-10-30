@@ -58,7 +58,7 @@ where
     ) -> Result<(), NetworkError> {
         let listener = TcpListener::bind(addr)
             .await
-            .map_err(|e| NetworkError::ListenerBindFailed(e))?;
+            .map_err(NetworkError::ListenerBindFailed)?;
         println!("Listening on {}", addr);
 
         loop {

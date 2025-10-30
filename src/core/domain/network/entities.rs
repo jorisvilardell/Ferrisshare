@@ -95,7 +95,7 @@ impl TryFrom<&str> for ProtocolMessage {
                 Ok(ProtocolMessage::Error(reason))
             }
             Some("BYE-RIS") => Ok(ProtocolMessage::ByeRis),
-            _ => return Err(ProtocolError::InvalidCommand),
+            _ => Err(ProtocolError::InvalidCommand),
         }
     }
 }

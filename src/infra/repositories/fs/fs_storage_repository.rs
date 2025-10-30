@@ -47,9 +47,7 @@ impl StorageRepository for FSStorageRepository {
 
         async move {
             // sanitize
-            if let Err(e) = FSStorageRepository::sanitize_filename(&filename) {
-                return Err(e);
-            }
+            FSStorageRepository::sanitize_filename(&filename)?;
 
             let path = self.file_path_for(&filename);
             // Use a temporary extension during transfer
@@ -57,12 +55,9 @@ impl StorageRepository for FSStorageRepository {
 
             // create parent dirs if needed
             if let Some(parent) = path.parent() {
-                if let Err(e) = tokio::fs::create_dir_all(parent).await {
-                    return Err(StorageError::Unknown(format!(
-                        "Failed to create dir: {}",
-                        e
-                    )));
-                }
+                tokio::fs::create_dir_all(parent)
+                    .await
+                    .map_err(|e| StorageError::Unknown(format!("Failed to create dir: {}", e)))?;
             }
 
             match tokio::fs::File::create(&part_path).await {
@@ -84,9 +79,7 @@ impl StorageRepository for FSStorageRepository {
 
         async move {
             // sanitize
-            if let Err(e) = FSStorageRepository::sanitize_filename(&filename) {
-                return Err(e);
-            }
+            FSStorageRepository::sanitize_filename(&filename)?;
 
             let path = self.file_path_for(&filename);
             // write into a .ferrisshare temporary file while transferring
@@ -94,16 +87,14 @@ impl StorageRepository for FSStorageRepository {
 
             // ensure parent dir exists before open
             if let Some(parent) = path.parent() {
-                if let Err(e) = tokio::fs::create_dir_all(parent).await {
-                    return Err(StorageError::Unknown(format!(
-                        "Failed to create dir: {}",
-                        e
-                    )));
-                }
+                tokio::fs::create_dir_all(parent)
+                    .await
+                    .map_err(|e| StorageError::Unknown(format!("Failed to create dir: {}", e)))?;
             }
 
             match tokio::fs::OpenOptions::new()
                 .create(true)
+                .truncate(false)
                 .write(true)
                 .open(&part_path)
                 .await
@@ -133,9 +124,7 @@ impl StorageRepository for FSStorageRepository {
 
         async move {
             // sanitize
-            if let Err(e) = FSStorageRepository::sanitize_filename(&filename) {
-                return Err(e);
-            }
+            FSStorageRepository::sanitize_filename(&filename)?;
 
             let path = PathBuf::from(&base).join(&filename);
             // Rename the .ferrisshare temp file to the final filename

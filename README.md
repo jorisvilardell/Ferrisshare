@@ -2,8 +2,7 @@
 
 Ferrisshare is a small Rust peer-to-peer file transfer toy used for a systems programming project.
 It implements a tiny text-based protocol over TCP to send a single file from a sender (CLI) to a receiver (listener).
-
-This README is intentionally short — it explains what the project is and how to run the listener and the CLI sender locally for development.
+For a detailed protocol and architecture overview, see [docs/architecture.md](docs/architecture.md).
 
 ## What it is
 
@@ -35,8 +34,12 @@ Send a file with the CLI (sender). Example: send the repository `README.md` to l
 
 ```bash
 # In another terminal
-cargo run --bin cli -- send --addr 127.0.0.1:9000 --file README.md --block-size 1024
+cargo run --bin cli -- send --addr 127.0.0.1:9000 --file README.md --block-size 2048
 ```
+
+**Recommended minimal block size**
+
+We recommend using a minimal block size of 2048 bytes (as shown in the example above). Larger blocks reduce protocol overhead and typically improve throughput for local transfers. Be aware larger blocks use more memory and may be less forgiving on very unreliable networks — adjust down if you see timeouts or memory pressure.
 
 Logs printed to both terminals show the protocol exchange (HELLO, OK, YEET blocks, OK-HOUSTEN responses, MISSION-ACCOMPLISHED, SUCCESS, BYE-RIS).
 
