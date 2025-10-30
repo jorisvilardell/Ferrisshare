@@ -38,7 +38,7 @@ where
                 filesize,
             } => {
                 println!("Execute HELLO command.");
-                let expected_blocks = (*filesize + 1023) / 1024;
+                let expected_blocks = (*filesize + 1023).div_ceil(1024);
                 let mut state_guard = state.lock().await;
                 println!(
                     "Setting state to Receiving with expected_blocks={}",
