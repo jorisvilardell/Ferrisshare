@@ -95,7 +95,7 @@ where
 
                 drop(state_guard);
 
-                Ok(ProtocolMessage::Ok)
+                Ok(ProtocolMessage::OkHousten(yeet_block.index))
             }
             ProtocolMessage::MissionAccomplished => {
                 let mut state_guard = state.lock().await;
@@ -116,6 +116,42 @@ where
         state: Arc<tokio::sync::Mutex<TransferState>>,
         data: &[u8],
     ) -> Result<(), CommandError> {
+        let mut state_guard = state.lock().await;
+        let (expected_blocks, focused_block, received_blocks) = match &mut *state_guard {
+            TransferState::Receiving {
+                expected_blocks,
+                focused_block,
+                received_blocks,
+            } => (expected_blocks, focused_block, received_blocks),
+            _ => {
+                return Err(CommandError::ExecutionFailed(
+                    "Error transfer state is not equal Receiving".to_string(),
+                ));
+            }
+        };
+        if let Some(focused_block) = focused_block {
+            if received_blocks.contains(&focused_block.index) {
+                println!("Block {} already received, ignoring.", focused_block.index);
+            } else {
+                println!("Stored binary data block: {:?}", focused_block);
+                self.storage
+                    .write_block("current_transfer_file", focused_block, data)
+                    .await
+                    .map_err(|e| {
+                        CommandError::ExecutionFailed(format!("Storage error: {:?}", e))
+                    })?;
+
+                received_blocks.push(focused_block.index);
+                *state_guard = TransferState::Receiving {
+                    expected_blocks: *expected_blocks,
+                    focused_block: None,
+                    received_blocks: received_blocks.clone(),
+                };
+            }
+        } else {
+            println!("No focused block to store data for.");
+        }
+
         Ok(())
     }
 }
