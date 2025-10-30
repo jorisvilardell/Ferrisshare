@@ -2,8 +2,7 @@
 
 Ferrisshare is a small Rust peer-to-peer file transfer toy used for a systems programming project.
 It implements a tiny text-based protocol over TCP to send a single file from a sender (CLI) to a receiver (listener).
-
-This README is intentionally short — it explains what the project is and how to run the listener and the CLI sender locally for development.
+For a detailed protocol and architecture overview, see [docs/architecture.md](docs/architecture.md).
 
 ## What it is
 
