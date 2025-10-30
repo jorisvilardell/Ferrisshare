@@ -3,19 +3,18 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
 use tokio::io::AsyncBufReadExt;
-use tokio::io::AsyncReadExt;
 use tokio::io::AsyncWriteExt;
 use tokio::io::BufReader;
 use tokio::net::TcpListener;
 use tokio::net::TcpStream;
-use tokio::stream;
+use tokio::sync::Mutex;
 use tokio::sync::mpsc::Receiver;
-use tokio::sync::mpsc::Sender;
 
 use crate::core::domain::command::ports::CommandService;
 use crate::core::domain::network::entities::NetworkError;
 use crate::core::domain::network::entities::ProtocolError;
 use crate::core::domain::network::entities::ProtocolMessage;
+use crate::core::domain::network::entities::TransferState;
 use crate::core::domain::network::ports::NetworkService;
 
 #[derive(Debug, Clone)]
@@ -25,6 +24,7 @@ where
 {
     command_service: C,
     active: Arc<AtomicBool>,
+    transfer_state: Arc<Mutex<TransferState>>,
 }
 
 impl<C> NetworkServiceImpl<C>
@@ -35,7 +35,14 @@ where
         NetworkServiceImpl {
             command_service,
             active: Arc::new(AtomicBool::new(false)),
+            transfer_state: Arc::new(Mutex::new(TransferState::Idle)),
         }
+    }
+
+    pub async fn reset_transfer_state(&self) {
+        let mut state_guard = self.transfer_state.lock().await;
+        *state_guard = TransferState::Idle;
+        drop(state_guard);
     }
 }
 
@@ -95,6 +102,10 @@ where
                 let n = reader.read_until(b'\n', &mut buf).await?;
                 if n == 0 {
                     println!("Client disconnected.");
+                    // Mark connection as inactive so listener can accept new ones
+                    self.active
+                        .store(false, std::sync::atomic::Ordering::SeqCst);
+                    self.reset_transfer_state().await;
                     break;
                 }
 
@@ -110,28 +121,66 @@ where
                 let line = std::str::from_utf8(&buf)
                     .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
 
+                let stream_ref = &mut reader.get_mut();
+
                 match ProtocolMessage::try_from(line) {
                     Ok(msg) => {
                         println!("Received message: {:?}", msg);
-                        match self.command_service.execute_protocol_command(&msg).await {
-                            Ok(response) => {
-                                println!("Response: {:?}", response);
-                                // Clone the underlying TcpStream to avoid moving reader
-                                let mut stream_ref = reader.get_mut();
-                                match self.send_message(&mut stream_ref, response).await {
-                                    Ok(_) => println!("Response sent successfully."),
-                                    Err(e) => eprintln!("Failed to send response: {:?}", e),
-                                }
-                            }
-                            Err(e) => {
-                                println!("Command execution error: {:?}", e);
-                                // Handle command execution error
-                            }
+
+                        if let Err(e) = self.trust_protocol(stream_ref, msg).await {
+                            eprintln!("Error handling protocol message: {:?}", e);
+                            let _ = self
+                                .send_message(stream_ref, ProtocolMessage::Error(String::from(e)))
+                                .await;
                         }
                     }
                     Err(e) => {
-                        // You have From<ProtocolError> for String
-                        println!("Failed to parse message: {}", String::from(e));
+                        let mut state_guard = self.transfer_state.lock().await;
+                        let was_receiving = match &mut *state_guard {
+                            TransferState::Receiving {
+                                expected_blocks,
+                                focused_block,
+                                received_blocks,
+                            } => {
+                                println!(
+                                    "In Receiving Binary from YeetBlock: expected_blocks={}, focused_block={:?}, received_blocks={:?}, binary data={}",
+                                    expected_blocks, focused_block, received_blocks, line
+                                );
+
+                                // TODO: Implement storage of binary data block here
+
+                                if let Some(focused_block) = focused_block {
+                                    if received_blocks.contains(&focused_block.index) {
+                                        println!(
+                                            "Block {} already received, ignoring.",
+                                            focused_block.index
+                                        );
+                                    } else {
+                                        println!("Stored binary data block: {:?}", focused_block);
+                                        received_blocks.push(focused_block.index);
+                                        *state_guard = TransferState::Receiving {
+                                            expected_blocks: *expected_blocks,
+                                            focused_block: None,
+                                            received_blocks: received_blocks.clone(),
+                                        };
+                                    }
+                                } else {
+                                    println!("No focused block to store data for.");
+                                }
+
+                                drop(state_guard);
+
+                                true
+                            }
+                            _ => false,
+                        };
+
+                        if !was_receiving {
+                            eprintln!("Failed to parse message: {:?}", e);
+                            let _ = self
+                                .send_message(stream_ref, ProtocolMessage::Error(String::from(e)))
+                                .await;
+                        }
                     }
                 }
 
@@ -140,6 +189,69 @@ where
             }
         }
 
+        self.active
+            .store(false, std::sync::atomic::Ordering::SeqCst);
+        self.reset_transfer_state().await;
+        Ok(())
+    }
+
+    async fn trust_protocol(
+        &self,
+        stream: &mut TcpStream,
+        message: ProtocolMessage,
+    ) -> Result<(), ProtocolError> {
+        let guard = self.transfer_state.lock().await;
+        match *guard {
+            TransferState::Idle => {
+                if !matches!(message, ProtocolMessage::Hello { .. }) {
+                    return Err(ProtocolError::InvalidCommand);
+                } else {
+                    println!("Transitioning from Idle to Receiving state.");
+                }
+            }
+            TransferState::Receiving { .. } => {
+                // Accept either a Yeet message or a MissionAccomplished message while receiving.
+                if !(matches!(message, ProtocolMessage::Yeet { .. })
+                    || matches!(message, ProtocolMessage::MissionAccomplished))
+                {
+                    return Err(ProtocolError::InvalidCommand);
+                } else {
+                    println!("In Receiving state, processing Yeet or MissionAccomplished.");
+                }
+            }
+            TransferState::Finished => {
+                if !matches!(message, ProtocolMessage::ByeRis) {
+                    return Err(ProtocolError::InvalidCommand);
+                } else {
+                    println!("Transitioning from Finished to Closed state.");
+                }
+            }
+            _ => {
+                return Err(ProtocolError::InvalidCommand);
+            }
+        }
+
+        drop(guard); // Release the lock before awaiting
+
+        println!("Executing command: {:?}", message);
+        match self
+            .command_service
+            .execute_protocol_command(Arc::clone(&self.transfer_state), &message)
+            .await
+        {
+            Ok(response) => {
+                println!("Response: {:?}", response);
+                // Clone the underlying TcpStream to avoid moving reader
+                match self.send_message(stream, response).await {
+                    Ok(_) => println!("Response sent successfully."),
+                    Err(e) => eprintln!("Failed to send response: {:?}", e),
+                }
+            }
+            Err(e) => {
+                println!("Command execution error: {:?}", e);
+                // Handle command execution error
+            }
+        }
         Ok(())
     }
 

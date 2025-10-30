@@ -1,4 +1,6 @@
-use std::convert::TryFrom;
+use std::{collections::HashSet, convert::TryFrom};
+
+use crate::core::domain::storage::entities::YeetBlock;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ProtocolMessage {
@@ -7,14 +9,9 @@ pub enum ProtocolMessage {
         filename: String,
         filesize: u64,
     },
-    Ok,           // "OK"
-    Nope(String), // "NOPE <reason>"
-    Yeet {
-        // "YEET <block_index> <block_size> <check_sum>"
-        block_index: u64,
-        block_size: u32,
-        check_sum: u32,
-    },
+    Ok,                  // "OK"
+    Nope(String),        // "NOPE <reason>"
+    Yeet(YeetBlock),     // "YEET <block_index> <block_size> <check_sum>"
     OkHousten(u64),      // "OK-HOUSTEN <block_index>"
     MissionAccomplished, // "MISSION-ACCOMPLISHED"
     Success,             // "SUCCESS"
@@ -73,11 +70,11 @@ impl TryFrom<&str> for ProtocolMessage {
                     .parse::<u32>()
                     .map_err(|_| ProtocolError::InvalidNumber)?;
 
-                Ok(ProtocolMessage::Yeet {
+                Ok(ProtocolMessage::Yeet(YeetBlock::new(
                     block_index,
                     block_size,
                     check_sum,
-                })
+                )))
             }
             Some("OK-HOUSTEN") => {
                 let block_index = tokens
@@ -110,15 +107,14 @@ impl From<ProtocolMessage> for String {
             }
             ProtocolMessage::Ok => "OK".to_string(),
             ProtocolMessage::Nope(reason) => format!("NOPE {}", reason),
-            ProtocolMessage::Yeet {
-                block_index,
-                block_size,
-                check_sum,
-            } => format!("YEET {} {} {}", block_index, block_size, check_sum),
+            ProtocolMessage::Yeet(yeet_block) => format!(
+                "YEET {} {} {}",
+                yeet_block.index, yeet_block.size, yeet_block.checksum
+            ),
             ProtocolMessage::OkHousten(block_index) => format!("OK-HOUSTEN {}", block_index),
             ProtocolMessage::MissionAccomplished => "MISSION-ACCOMPLISHED".to_string(),
             ProtocolMessage::Success => "SUCCESS".to_string(),
-            ProtocolMessage::Error(reason) => format!("ERROR {}", reason),
+            ProtocolMessage::Error(reason) => format!("ERROR: {}", reason),
             ProtocolMessage::ByeRis => "BYE-RIS".to_string(),
         }
     }
@@ -127,11 +123,11 @@ impl From<ProtocolMessage> for String {
 impl From<ProtocolError> for String {
     fn from(err: ProtocolError) -> Self {
         match err {
-            ProtocolError::InvalidUtf8 => "ERROR Invalid UTF-8 sequence".to_string(),
-            ProtocolError::InvalidCommand => "ERROR Invalid command".to_string(),
-            ProtocolError::MissingArgs => "ERROR Missing arguments".to_string(),
-            ProtocolError::InvalidNumber => "ERROR Invalid number format".to_string(),
-            ProtocolError::Incomplete => "ERROR Incomplete command".to_string(),
+            ProtocolError::InvalidUtf8 => "Invalid UTF-8 sequence".to_string(),
+            ProtocolError::InvalidCommand => "Invalid command".to_string(),
+            ProtocolError::MissingArgs => "Missing arguments".to_string(),
+            ProtocolError::InvalidNumber => "Invalid number format".to_string(),
+            ProtocolError::Incomplete => "Incomplete command".to_string(),
         }
     }
 }
@@ -167,4 +163,16 @@ impl From<NetworkError> for String {
             NetworkError::ProtocolError(proto_err) => String::from(proto_err),
         }
     }
+}
+
+#[derive(Debug, Clone)]
+pub enum TransferState {
+    Idle,
+    Receiving {
+        expected_blocks: u64,
+        focused_block: Option<YeetBlock>,
+        received_blocks: Vec<u64>,
+    },
+    Finished,
+    Closed,
 }

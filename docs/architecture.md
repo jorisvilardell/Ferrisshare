@@ -45,6 +45,8 @@ Without Tokio, the implementation would require manually managing threads and bl
 
 The protocol defines a simple, **text-based command layer** over TCP for transferring a single file between two peers on the same network. It relies on TCP for reliable, ordered delivery, while adding **application-level commands** to coordinate the transfer, manage file chunks, and confirm completion. The connection is **bi-directional**, allowing the receiver to respond directly through the same TCP stream.
 
+FerrisShare uses an asynchronous channel (`mpsc::channel`) to transmit accepted TCP connections from the network listener to the handler responsible for processing protocol commands. This mechanism decouples the management of incoming connections from the business logic, ensures synchronization between asynchronous tasks, and guarantees that only one active connection is handled at a time. The channel thus facilitates internal communication and enhances the modularity of the network service.
+
 ### **Protocol Commands**
 
 | Command                  | Sender | Arguments                                              | Response                   | Description                                                                                      |

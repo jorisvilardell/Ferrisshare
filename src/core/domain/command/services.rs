@@ -1,6 +1,9 @@
+use std::sync::Arc;
+
 use crate::core::domain::{
     command::{entities::CommandError, ports::CommandService},
-    network::entities::ProtocolMessage,
+    network::entities::{ProtocolMessage, TransferState},
+    storage::entities::YeetBlock,
 };
 
 #[derive(Clone)]
@@ -15,22 +18,84 @@ impl CommandServiceImpl {
 impl CommandService for CommandServiceImpl {
     async fn execute_protocol_command(
         &self,
+        state: Arc<tokio::sync::Mutex<TransferState>>,
         msg: &ProtocolMessage,
     ) -> Result<ProtocolMessage, CommandError> {
         match msg {
-            ProtocolMessage::Hello { filename, filesize } => {
-                // Démarrer la logique de préparation de réception
+            ProtocolMessage::Hello {
+                filename: _filename,
+                filesize,
+            } => {
+                println!("Execute HELLO command.");
+                let expected_blocks = (*filesize + 1023) / 1024;
+                let mut state_guard = state.lock().await;
+                println!(
+                    "Setting state to Receiving with expected_blocks={}",
+                    expected_blocks
+                );
+                *state_guard = TransferState::Receiving {
+                    expected_blocks,
+                    focused_block: None,
+                    received_blocks: Vec::with_capacity(expected_blocks as usize),
+                };
+
+                drop(state_guard);
+
                 Ok(ProtocolMessage::Ok)
             }
-            ProtocolMessage::Yeet {
-                block_index,
-                block_size,
-                check_sum,
-            } => {
-                // Logique pour gérer la réception d'un bloc de données
-                Ok(ProtocolMessage::OkHousten(block_index.clone()))
+            ProtocolMessage::Yeet(yeet_block) => {
+                let mut state_guard = state.lock().await;
+                let (expected_blocks, focused_block, received_blocks) = match &mut *state_guard {
+                    TransferState::Receiving {
+                        expected_blocks,
+                        focused_block,
+                        received_blocks,
+                    } => (expected_blocks, focused_block, received_blocks),
+                    _ => {
+                        return Err(CommandError::ExecutionFailed(
+                            "Error transfer state is not equal Receiving".to_string(),
+                        ));
+                    }
+                };
+
+                // Ensure we don't exceed the expected number of blocks.
+                if received_blocks.len() >= *expected_blocks as usize {
+                    println!("Received all expected blocks.");
+                    return Err(CommandError::ExecutionFailed(
+                        "Received block index exceeds expected blocks".to_string(),
+                    ));
+                }
+
+                if let Some(focused_block) = focused_block
+                    && !received_blocks.contains(&focused_block.index)
+                {
+                    println!("Received expected block index: {}", focused_block.index);
+                    return Err(CommandError::ExecutionFailed(
+                        "Block not received. Can't proceed with next block.".to_string(),
+                    ));
+                }
+
+                // Reuse the mutable guard to update the state without locking again.
+                *state_guard = TransferState::Receiving {
+                    expected_blocks: *expected_blocks,
+                    focused_block: Some(yeet_block.clone()),
+                    received_blocks: received_blocks.clone(),
+                };
+
+                drop(state_guard);
+
+                Ok(ProtocolMessage::Ok)
             }
-            // ... autres commandes
+            ProtocolMessage::MissionAccomplished => {
+                let mut state_guard = state.lock().await;
+                *state_guard = TransferState::Finished;
+                drop(state_guard);
+                Ok(ProtocolMessage::Success)
+            }
+            ProtocolMessage::ByeRis => {
+                *state.lock().await = TransferState::Closed;
+                Ok(ProtocolMessage::ByeRis)
+            }
             _ => Err(CommandError::InvalidCommand),
         }
     }
