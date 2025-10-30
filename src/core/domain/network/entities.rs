@@ -168,3 +168,14 @@ impl From<NetworkError> for String {
         }
     }
 }
+
+#[derive(Debug, Clone)]
+pub enum TransferState {
+    Idle,
+    Receiving {
+        expected_blocks: u64,
+        received_blocks: Vec<u64>,
+    },
+    Finished,
+    Closed,
+}
