@@ -1,4 +1,3 @@
-use std::f32::consts::E;
 use std::io::Error;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
