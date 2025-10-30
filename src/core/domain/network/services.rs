@@ -38,6 +38,12 @@ where
             transfer_state: Arc::new(Mutex::new(TransferState::Idle)),
         }
     }
+
+    pub async fn reset_transfer_state(&self) {
+        let mut state_guard = self.transfer_state.lock().await;
+        *state_guard = TransferState::Idle;
+        drop(state_guard);
+    }
 }
 
 impl<C> NetworkService for NetworkServiceImpl<C>
@@ -96,6 +102,10 @@ where
                 let n = reader.read_until(b'\n', &mut buf).await?;
                 if n == 0 {
                     println!("Client disconnected.");
+                    // Mark connection as inactive so listener can accept new ones
+                    self.active
+                        .store(false, std::sync::atomic::Ordering::SeqCst);
+                    self.reset_transfer_state().await;
                     break;
                 }
 
@@ -125,10 +135,52 @@ where
                         }
                     }
                     Err(e) => {
-                        eprintln!("Failed to parse message: {:?}", e);
-                        let _ = self
-                            .send_message(stream_ref, ProtocolMessage::Error(String::from(e)))
-                            .await;
+                        let mut state_guard = self.transfer_state.lock().await;
+                        let was_receiving = match &mut *state_guard {
+                            TransferState::Receiving {
+                                expected_blocks,
+                                focused_block,
+                                received_blocks,
+                            } => {
+                                println!(
+                                    "In Receiving Binary from YeetBlock: expected_blocks={}, focused_block={:?}, received_blocks={:?}, binary data={}",
+                                    expected_blocks, focused_block, received_blocks, line
+                                );
+
+                                // TODO: Implement storage of binary data block here
+
+                                if let Some(focused_block) = focused_block {
+                                    if received_blocks.contains(&focused_block.index) {
+                                        println!(
+                                            "Block {} already received, ignoring.",
+                                            focused_block.index
+                                        );
+                                    } else {
+                                        println!("Stored binary data block: {:?}", focused_block);
+                                        received_blocks.push(focused_block.index);
+                                        *state_guard = TransferState::Receiving {
+                                            expected_blocks: *expected_blocks,
+                                            focused_block: None,
+                                            received_blocks: received_blocks.clone(),
+                                        };
+                                    }
+                                } else {
+                                    println!("No focused block to store data for.");
+                                }
+
+                                drop(state_guard);
+
+                                true
+                            }
+                            _ => false,
+                        };
+
+                        if !was_receiving {
+                            eprintln!("Failed to parse message: {:?}", e);
+                            let _ = self
+                                .send_message(stream_ref, ProtocolMessage::Error(String::from(e)))
+                                .await;
+                        }
                     }
                 }
 
@@ -137,6 +189,9 @@ where
             }
         }
 
+        self.active
+            .store(false, std::sync::atomic::Ordering::SeqCst);
+        self.reset_transfer_state().await;
         Ok(())
     }
 
@@ -150,18 +205,25 @@ where
             TransferState::Idle => {
                 if !matches!(message, ProtocolMessage::Hello { .. }) {
                     return Err(ProtocolError::InvalidCommand);
+                } else {
+                    println!("Transitioning from Idle to Receiving state.");
                 }
             }
             TransferState::Receiving { .. } => {
-                if !matches!(message, ProtocolMessage::Yeet { .. })
-                    || !matches!(message, ProtocolMessage::MissionAccomplished)
+                // Accept either a Yeet message or a MissionAccomplished message while receiving.
+                if !(matches!(message, ProtocolMessage::Yeet { .. })
+                    || matches!(message, ProtocolMessage::MissionAccomplished))
                 {
                     return Err(ProtocolError::InvalidCommand);
+                } else {
+                    println!("In Receiving state, processing Yeet or MissionAccomplished.");
                 }
             }
             TransferState::Finished => {
                 if !matches!(message, ProtocolMessage::ByeRis) {
                     return Err(ProtocolError::InvalidCommand);
+                } else {
+                    println!("Transitioning from Finished to Closed state.");
                 }
             }
             _ => {
@@ -169,6 +231,9 @@ where
             }
         }
 
+        drop(guard); // Release the lock before awaiting
+
+        println!("Executing command: {:?}", message);
         match self
             .command_service
             .execute_protocol_command(Arc::clone(&self.transfer_state), &message)

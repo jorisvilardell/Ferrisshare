@@ -1,4 +1,6 @@
-use std::convert::TryFrom;
+use std::{collections::HashSet, convert::TryFrom};
+
+use crate::core::domain::storage::entities::YeetBlock;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ProtocolMessage {
@@ -7,14 +9,9 @@ pub enum ProtocolMessage {
         filename: String,
         filesize: u64,
     },
-    Ok,           // "OK"
-    Nope(String), // "NOPE <reason>"
-    Yeet {
-        // "YEET <block_index> <block_size> <check_sum>"
-        block_index: u64,
-        block_size: u32,
-        check_sum: u32,
-    },
+    Ok,                  // "OK"
+    Nope(String),        // "NOPE <reason>"
+    Yeet(YeetBlock),     // "YEET <block_index> <block_size> <check_sum>"
     OkHousten(u64),      // "OK-HOUSTEN <block_index>"
     MissionAccomplished, // "MISSION-ACCOMPLISHED"
     Success,             // "SUCCESS"
@@ -73,11 +70,11 @@ impl TryFrom<&str> for ProtocolMessage {
                     .parse::<u32>()
                     .map_err(|_| ProtocolError::InvalidNumber)?;
 
-                Ok(ProtocolMessage::Yeet {
+                Ok(ProtocolMessage::Yeet(YeetBlock::new(
                     block_index,
                     block_size,
                     check_sum,
-                })
+                )))
             }
             Some("OK-HOUSTEN") => {
                 let block_index = tokens
@@ -110,11 +107,10 @@ impl From<ProtocolMessage> for String {
             }
             ProtocolMessage::Ok => "OK".to_string(),
             ProtocolMessage::Nope(reason) => format!("NOPE {}", reason),
-            ProtocolMessage::Yeet {
-                block_index,
-                block_size,
-                check_sum,
-            } => format!("YEET {} {} {}", block_index, block_size, check_sum),
+            ProtocolMessage::Yeet(yeet_block) => format!(
+                "YEET {} {} {}",
+                yeet_block.index, yeet_block.size, yeet_block.checksum
+            ),
             ProtocolMessage::OkHousten(block_index) => format!("OK-HOUSTEN {}", block_index),
             ProtocolMessage::MissionAccomplished => "MISSION-ACCOMPLISHED".to_string(),
             ProtocolMessage::Success => "SUCCESS".to_string(),
@@ -174,6 +170,7 @@ pub enum TransferState {
     Idle,
     Receiving {
         expected_blocks: u64,
+        focused_block: Option<YeetBlock>,
         received_blocks: Vec<u64>,
     },
     Finished,
