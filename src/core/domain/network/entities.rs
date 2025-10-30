@@ -26,6 +26,7 @@ pub enum ProtocolError {
     MissingArgs,
     InvalidNumber,
     Incomplete,
+    CommandExecutionFailed(String),
 }
 
 impl TryFrom<&str> for ProtocolMessage {
@@ -128,6 +129,9 @@ impl From<ProtocolError> for String {
             ProtocolError::MissingArgs => "Missing arguments".to_string(),
             ProtocolError::InvalidNumber => "Invalid number format".to_string(),
             ProtocolError::Incomplete => "Incomplete command".to_string(),
+            ProtocolError::CommandExecutionFailed(msg) => {
+                format!("Command execution failed: {}", msg)
+            }
         }
     }
 }

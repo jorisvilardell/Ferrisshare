@@ -104,7 +104,7 @@ where
 
                 drop(state_guard);
 
-                Ok(ProtocolMessage::OkHousten(yeet_block.index))
+                Ok(ProtocolMessage::Yeet(yeet_block.clone()))
             }
             ProtocolMessage::MissionAccomplished => {
                 let mut state_guard = state.lock().await;
@@ -136,51 +136,92 @@ where
         &self,
         state: Arc<tokio::sync::Mutex<TransferState>>,
         data: &[u8],
-    ) -> Result<(), CommandError> {
+    ) -> Result<ProtocolMessage, CommandError> {
+        // Lock once and extract what we need.
         let mut state_guard = state.lock().await;
-        let (expected_blocks, focused_block, received_blocks, current_file) =
-            match &mut *state_guard {
-                TransferState::Receiving {
-                    expected_blocks,
-                    focused_block,
-                    received_blocks,
-                    current_file,
-                } => (
-                    expected_blocks,
-                    focused_block,
-                    received_blocks,
-                    current_file,
-                ),
-                _ => {
-                    return Err(CommandError::ExecutionFailed(
-                        "Error transfer state is not equal Receiving".to_string(),
-                    ));
-                }
-            };
-        if let Some(focused_block) = focused_block {
-            if received_blocks.contains(&focused_block.index) {
-                println!("Block {} already received, ignoring.", focused_block.index);
-            } else {
-                println!("Stored binary data block: {:?}", focused_block);
-                self.storage
-                    .write_block(current_file, focused_block, data)
-                    .await
-                    .map_err(|e| {
-                        CommandError::ExecutionFailed(format!("Storage error: {:?}", e))
-                    })?;
 
-                received_blocks.push(focused_block.index);
-                *state_guard = TransferState::Receiving {
-                    current_file: current_file.clone(),
-                    expected_blocks: *expected_blocks,
-                    focused_block: None,
-                    received_blocks: received_blocks.clone(),
-                };
+        let (
+            mut expected_blocks_val,
+            maybe_focused_block,
+            received_blocks_clone,
+            current_file_clone,
+        ) = match &mut *state_guard {
+            TransferState::Receiving {
+                expected_blocks,
+                focused_block,
+                received_blocks,
+                current_file,
+            } => {
+                // take the focused block out (leaves None in the guard)
+                let taken_block = focused_block.take();
+                (
+                    *expected_blocks,
+                    taken_block,
+                    received_blocks.clone(),
+                    current_file.clone(),
+                )
             }
-        } else {
-            println!("No focused block to store data for.");
+            _ => {
+                return Err(CommandError::ExecutionFailed(
+                    "Error transfer state is not equal Receiving".to_string(),
+                ));
+            }
+        };
+
+        // If there was no focused block, nothing to do.
+        let focused_block = match maybe_focused_block {
+            Some(b) => b,
+            None => {
+                println!("No focused block to store data for.");
+                return Ok(ProtocolMessage::Ok);
+            }
+        };
+
+        // If block already received, restore focused_block into the state and return.
+        if received_blocks_clone.contains(&focused_block.index) {
+            // restore focused_block back into the guard before returning
+            if let TransferState::Receiving {
+                focused_block: guard_focused_block,
+                ..
+            } = &mut *state_guard
+            {
+                *guard_focused_block = Some(focused_block.clone());
+            }
+            println!("Block {} already received, ignoring.", focused_block.index);
+            return Ok(ProtocolMessage::Ok);
         }
 
-        Ok(())
+        println!("Stored binary data block: {:?}", focused_block);
+
+        // Clone what we need for the async storage write, then drop the guard before awaiting.
+        let file_for_write = current_file_clone.clone();
+        let block_for_write = focused_block.clone();
+        drop(state_guard);
+
+        // Perform the async write while not holding the mutex.
+        self.storage
+            .write_block(&file_for_write, &block_for_write, data)
+            .await
+            .map_err(|e| CommandError::ExecutionFailed(format!("Storage error: {:?}", e)))?;
+
+        // Re-lock and update received_blocks + clear focused_block.
+        let mut state_guard = state.lock().await;
+        match &mut *state_guard {
+            TransferState::Receiving {
+                received_blocks,
+                focused_block,
+                ..
+            } => {
+                received_blocks.push(block_for_write.index);
+                *focused_block = None;
+            }
+            _ => {
+                return Err(CommandError::ExecutionFailed(
+                    "Transfer state changed while writing block".to_string(),
+                ));
+            }
+        };
+
+        Ok(ProtocolMessage::OkHousten(block_for_write.index))
     }
 }

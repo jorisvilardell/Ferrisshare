@@ -15,5 +15,5 @@ pub trait CommandService: Send + Sync {
         &self,
         state: Arc<tokio::sync::Mutex<TransferState>>,
         data: &[u8],
-    ) -> impl Future<Output = Result<(), CommandError>>;
+    ) -> impl Future<Output = Result<ProtocolMessage, CommandError>>;
 }
