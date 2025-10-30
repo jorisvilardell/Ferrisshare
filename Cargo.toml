@@ -8,6 +8,7 @@ async-trait = "0.1.89"
 clap = { version = "4.5.50", features = ["derive"] }
 tokio = { version = "1", features = ["net", "rt-multi-thread", "rt", "fs", "io-util", "sync", "macros"] }
 anyhow = "1.0"
+dotenv = "0.15.0"
 
 [[bin]]
 name = "cli"
