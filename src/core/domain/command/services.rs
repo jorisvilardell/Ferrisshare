@@ -3,19 +3,30 @@ use std::sync::Arc;
 use crate::core::domain::{
     command::{entities::CommandError, ports::CommandService},
     network::entities::{ProtocolMessage, TransferState},
-    storage::entities::YeetBlock,
+    storage::ports::StorageRepository,
 };
 
 #[derive(Clone)]
-pub struct CommandServiceImpl {}
+pub struct CommandServiceImpl<C>
+where
+    C: StorageRepository,
+{
+    storage: C,
+}
 
-impl CommandServiceImpl {
-    pub fn new() -> Self {
-        CommandServiceImpl {}
+impl<C> CommandServiceImpl<C>
+where
+    C: StorageRepository + Clone + Send + Sync + 'static,
+{
+    pub fn new(storage: C) -> Self {
+        CommandServiceImpl { storage }
     }
 }
 
-impl CommandService for CommandServiceImpl {
+impl<C> CommandService for CommandServiceImpl<C>
+where
+    C: StorageRepository + Clone + Send + Sync + 'static,
+{
     async fn execute_protocol_command(
         &self,
         state: Arc<tokio::sync::Mutex<TransferState>>,
@@ -98,5 +109,13 @@ impl CommandService for CommandServiceImpl {
             }
             _ => Err(CommandError::InvalidCommand),
         }
+    }
+
+    async fn process_binary_data(
+        &self,
+        state: Arc<tokio::sync::Mutex<TransferState>>,
+        data: &[u8],
+    ) -> Result<(), CommandError> {
+        Ok(())
     }
 }
