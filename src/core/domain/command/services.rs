@@ -140,33 +140,29 @@ where
         // Lock once and extract what we need.
         let mut state_guard = state.lock().await;
 
-        let (
-            mut expected_blocks_val,
-            maybe_focused_block,
-            received_blocks_clone,
-            current_file_clone,
-        ) = match &mut *state_guard {
-            TransferState::Receiving {
-                expected_blocks,
-                focused_block,
-                received_blocks,
-                current_file,
-            } => {
-                // take the focused block out (leaves None in the guard)
-                let taken_block = focused_block.take();
-                (
-                    *expected_blocks,
-                    taken_block,
-                    received_blocks.clone(),
-                    current_file.clone(),
-                )
-            }
-            _ => {
-                return Err(CommandError::ExecutionFailed(
-                    "Error transfer state is not equal Receiving".to_string(),
-                ));
-            }
-        };
+        let (_, maybe_focused_block, received_blocks_clone, current_file_clone) =
+            match &mut *state_guard {
+                TransferState::Receiving {
+                    expected_blocks,
+                    focused_block,
+                    received_blocks,
+                    current_file,
+                } => {
+                    // take the focused block out (leaves None in the guard)
+                    let taken_block = focused_block.take();
+                    (
+                        *expected_blocks,
+                        taken_block,
+                        received_blocks.clone(),
+                        current_file.clone(),
+                    )
+                }
+                _ => {
+                    return Err(CommandError::ExecutionFailed(
+                        "Error transfer state is not equal Receiving".to_string(),
+                    ));
+                }
+            };
 
         // If there was no focused block, nothing to do.
         let focused_block = match maybe_focused_block {
