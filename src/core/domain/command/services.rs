@@ -45,6 +45,7 @@ where
                     expected_blocks
                 );
                 *state_guard = TransferState::Receiving {
+                    current_file: _filename.clone(),
                     expected_blocks,
                     focused_block: None,
                     received_blocks: Vec::with_capacity(expected_blocks as usize),
@@ -56,18 +57,25 @@ where
             }
             ProtocolMessage::Yeet(yeet_block) => {
                 let mut state_guard = state.lock().await;
-                let (expected_blocks, focused_block, received_blocks) = match &mut *state_guard {
-                    TransferState::Receiving {
-                        expected_blocks,
-                        focused_block,
-                        received_blocks,
-                    } => (expected_blocks, focused_block, received_blocks),
-                    _ => {
-                        return Err(CommandError::ExecutionFailed(
-                            "Error transfer state is not equal Receiving".to_string(),
-                        ));
-                    }
-                };
+                let (expected_blocks, focused_block, received_blocks, current_file) =
+                    match &mut *state_guard {
+                        TransferState::Receiving {
+                            expected_blocks,
+                            focused_block,
+                            received_blocks,
+                            current_file,
+                        } => (
+                            expected_blocks,
+                            focused_block,
+                            received_blocks,
+                            current_file,
+                        ),
+                        _ => {
+                            return Err(CommandError::ExecutionFailed(
+                                "Error transfer state is not equal Receiving".to_string(),
+                            ));
+                        }
+                    };
 
                 // Ensure we don't exceed the expected number of blocks.
                 if received_blocks.len() >= *expected_blocks as usize {
@@ -88,6 +96,7 @@ where
 
                 // Reuse the mutable guard to update the state without locking again.
                 *state_guard = TransferState::Receiving {
+                    current_file: current_file.clone(),
                     expected_blocks: *expected_blocks,
                     focused_block: Some(yeet_block.clone()),
                     received_blocks: received_blocks.clone(),
@@ -99,6 +108,18 @@ where
             }
             ProtocolMessage::MissionAccomplished => {
                 let mut state_guard = state.lock().await;
+                let current_file = match &*state_guard {
+                    TransferState::Receiving { current_file, .. } => current_file,
+                    _ => {
+                        return Err(CommandError::ExecutionFailed(
+                            "Error transfer state is not equal Receiving".to_string(),
+                        ));
+                    }
+                };
+
+                self.storage.finalize(current_file).await.map_err(|e| {
+                    CommandError::ExecutionFailed(format!("Storage error: {:?}", e))
+                })?;
                 *state_guard = TransferState::Finished;
                 drop(state_guard);
                 Ok(ProtocolMessage::Success)
@@ -117,25 +138,32 @@ where
         data: &[u8],
     ) -> Result<(), CommandError> {
         let mut state_guard = state.lock().await;
-        let (expected_blocks, focused_block, received_blocks) = match &mut *state_guard {
-            TransferState::Receiving {
-                expected_blocks,
-                focused_block,
-                received_blocks,
-            } => (expected_blocks, focused_block, received_blocks),
-            _ => {
-                return Err(CommandError::ExecutionFailed(
-                    "Error transfer state is not equal Receiving".to_string(),
-                ));
-            }
-        };
+        let (expected_blocks, focused_block, received_blocks, current_file) =
+            match &mut *state_guard {
+                TransferState::Receiving {
+                    expected_blocks,
+                    focused_block,
+                    received_blocks,
+                    current_file,
+                } => (
+                    expected_blocks,
+                    focused_block,
+                    received_blocks,
+                    current_file,
+                ),
+                _ => {
+                    return Err(CommandError::ExecutionFailed(
+                        "Error transfer state is not equal Receiving".to_string(),
+                    ));
+                }
+            };
         if let Some(focused_block) = focused_block {
             if received_blocks.contains(&focused_block.index) {
                 println!("Block {} already received, ignoring.", focused_block.index);
             } else {
                 println!("Stored binary data block: {:?}", focused_block);
                 self.storage
-                    .write_block("current_transfer_file", focused_block, data)
+                    .write_block(current_file, focused_block, data)
                     .await
                     .map_err(|e| {
                         CommandError::ExecutionFailed(format!("Storage error: {:?}", e))
@@ -143,6 +171,7 @@ where
 
                 received_blocks.push(focused_block.index);
                 *state_guard = TransferState::Receiving {
+                    current_file: current_file.clone(),
                     expected_blocks: *expected_blocks,
                     focused_block: None,
                     received_blocks: received_blocks.clone(),

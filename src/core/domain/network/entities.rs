@@ -169,6 +169,7 @@ impl From<NetworkError> for String {
 pub enum TransferState {
     Idle,
     Receiving {
+        current_file: String,
         expected_blocks: u64,
         focused_block: Option<YeetBlock>,
         received_blocks: Vec<u64>,

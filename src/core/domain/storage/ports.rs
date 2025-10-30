@@ -8,5 +8,8 @@ pub trait StorageRepository {
         block: &YeetBlock,
         data: &[u8],
     ) -> impl Future<Output = Result<(), StorageError>> + Send;
-    fn finalize(&self, filename: &str) -> impl Future<Output = Result<(), StorageError>> + Send;
+    fn finalize(
+        &self,
+        filename: &str,
+    ) -> impl Future<Output = Result<(), StorageError>> + Send + Sync;
 }
