@@ -1,4 +1,4 @@
-use std::{collections::HashSet, convert::TryFrom};
+use std::convert::TryFrom;
 
 use crate::core::domain::storage::entities::YeetBlock;
 
