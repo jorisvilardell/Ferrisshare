@@ -1,8 +1,10 @@
+use std::f32::consts::E;
 use std::io::Error;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
 use tokio::io::AsyncBufReadExt;
+use tokio::io::AsyncReadExt;
 use tokio::io::AsyncWriteExt;
 use tokio::io::BufReader;
 use tokio::net::TcpListener;
@@ -92,7 +94,8 @@ where
 
     async fn handler(&self, mut rx: Receiver<TcpStream>) -> Result<(), Error> {
         while let Some(stream) = rx.recv().await {
-            let mut reader = BufReader::new(stream);
+            let (read_half, mut write_half) = stream.into_split();
+            let mut reader = BufReader::new(read_half);
             let mut buf = Vec::new();
 
             loop {
@@ -121,17 +124,61 @@ where
                 let line = std::str::from_utf8(&buf)
                     .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
 
-                let stream_ref = &mut reader.get_mut();
-
                 match ProtocolMessage::try_from(line) {
                     Ok(msg) => {
                         println!("Received message: {:?}", msg);
 
-                        if let Err(e) = self.trust_protocol(stream_ref, msg).await {
-                            eprintln!("Error handling protocol message: {:?}", e);
-                            let _ = self
-                                .send_message(stream_ref, ProtocolMessage::Error(String::from(e)))
-                                .await;
+                        match self.trust_protocol(msg).await {
+                            Ok(message) => match message {
+                                ProtocolMessage::Yeet(yeet_block) => {
+                                    let mut bin_buf = vec![0u8; yeet_block.size as usize];
+                                    if let Err(e) = reader.read_exact(&mut bin_buf).await {
+                                        eprintln!("Error reading binary block: {:?}", e);
+                                        let err_msg = ProtocolMessage::Error(String::from(
+                                            "Read binary failed",
+                                        ));
+                                        let s = String::from(err_msg) + "\n";
+                                        let _ = write_half.write_all(s.as_bytes()).await;
+                                        continue;
+                                    }
+
+                                    // Consume the trailing newline after the binary block if any.
+                                    let mut _end = Vec::new();
+                                    let _ = reader.read_until(b'\n', &mut _end).await;
+
+                                    // Forward the block to the command service for storage.
+                                    match self
+                                        .command_service
+                                        .process_binary_data(
+                                            Arc::clone(&self.transfer_state),
+                                            &bin_buf,
+                                        )
+                                        .await
+                                    {
+                                        Ok(response_msg) => {
+                                            let s = String::from(response_msg) + "\n";
+                                            if let Err(e) = write_half.write_all(s.as_bytes()).await
+                                            {
+                                                eprintln!("Error sending response: {:?}", e);
+                                            }
+                                        }
+                                        Err(e) => {
+                                            eprintln!("Error processing binary data: {:?}", e);
+                                            let err_msg = ProtocolMessage::Error(String::from(e));
+                                            let s = String::from(err_msg) + "\n";
+                                            let _ = write_half.write_all(s.as_bytes()).await;
+                                        }
+                                    }
+                                }
+                                other => {
+                                    // Non-YEET responses (OK, SUCCESS, etc.) are sent back to writer.
+                                    let s = String::from(other) + "\n";
+                                    if let Err(e) = write_half.write_all(s.as_bytes()).await {
+                                        eprintln!("Error sending message: {:?}", e);
+                                    }
+                                }
+                            },
+                            Err(e) => eprintln!("Error handling protocol message: {:?}", e),
                         }
 
                         let guard = self.transfer_state.lock().await;
@@ -143,7 +190,8 @@ where
                                 drop(guard);
 
                                 self.reset_transfer_state().await;
-                                let _ = stream_ref.shutdown().await;
+                                // shutdown the write half
+                                let _ = write_half.shutdown().await;
 
                                 break;
                             }
@@ -159,9 +207,9 @@ where
                             .await
                         {
                             eprintln!("Error processing binary data: {:?}", e);
-                            let _ = self
-                                .send_message(stream_ref, ProtocolMessage::Error(String::from(e)))
-                                .await;
+                            let err_msg = ProtocolMessage::Error(format!("{:?}", e));
+                            let s = String::from(err_msg) + "\n";
+                            let _ = write_half.write_all(s.as_bytes()).await;
                         }
                     }
                 }
@@ -176,9 +224,8 @@ where
 
     async fn trust_protocol(
         &self,
-        stream: &mut TcpStream,
         message: ProtocolMessage,
-    ) -> Result<(), ProtocolError> {
+    ) -> Result<ProtocolMessage, ProtocolError> {
         let guard = self.transfer_state.lock().await;
         match *guard {
             TransferState::Idle => {
@@ -213,25 +260,10 @@ where
         drop(guard); // Release the lock before awaiting
 
         println!("Executing command: {:?}", message);
-        match self
-            .command_service
+        self.command_service
             .execute_protocol_command(Arc::clone(&self.transfer_state), &message)
             .await
-        {
-            Ok(response) => {
-                println!("Response: {:?}", response);
-                // Clone the underlying TcpStream to avoid moving reader
-                match self.send_message(stream, response).await {
-                    Ok(_) => println!("Response sent successfully."),
-                    Err(e) => eprintln!("Failed to send response: {:?}", e),
-                }
-            }
-            Err(e) => {
-                println!("Command execution error: {:?}", e);
-                // Handle command execution error
-            }
-        }
-        Ok(())
+            .map_err(|e| ProtocolError::CommandExecutionFailed(format!("{:?}", e)))
     }
 
     async fn send_message(
