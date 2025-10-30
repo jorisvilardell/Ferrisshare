@@ -1,8 +1,10 @@
+use dotenv::dotenv;
 use std::sync::Arc;
 
 use tokio::{net::TcpStream, sync::mpsc};
 
 use ferrisshare::{
+    application::config::Config,
     core::domain::{
         command::services::CommandServiceImpl,
         network::{ports::NetworkService as _, services::NetworkServiceImpl},
@@ -12,9 +14,12 @@ use ferrisshare::{
 
 #[tokio::main]
 async fn main() -> tokio::io::Result<()> {
+    dotenv().ok();
+    let cfg: Config = Config::from_env();
+
     let (tx, rx) = mpsc::channel::<TcpStream>(1);
 
-    let storage_repo = FSStorageRepository::new("./public/".into());
+    let storage_repo = FSStorageRepository::new(cfg.ferris_base_path);
 
     let command_service = CommandServiceImpl::new(storage_repo);
     let network_service = NetworkServiceImpl::new(command_service);
@@ -36,7 +41,10 @@ async fn main() -> tokio::io::Result<()> {
 
     if let Err(e) = ferrisshare_state
         .network_service
-        .listener("127.0.0.1:9000", tx)
+        .listener(
+            format!("{}:{}", cfg.ferris_host, cfg.ferris_port).as_str(),
+            tx,
+        )
         .await
     {
         eprintln!("Listener error: {:?}", e);
