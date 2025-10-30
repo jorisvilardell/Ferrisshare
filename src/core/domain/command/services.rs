@@ -3,19 +3,30 @@ use std::sync::Arc;
 use crate::core::domain::{
     command::{entities::CommandError, ports::CommandService},
     network::entities::{ProtocolMessage, TransferState},
-    storage::entities::YeetBlock,
+    storage::ports::StorageRepository,
 };
 
 #[derive(Clone)]
-pub struct CommandServiceImpl {}
+pub struct CommandServiceImpl<C>
+where
+    C: StorageRepository,
+{
+    storage: C,
+}
 
-impl CommandServiceImpl {
-    pub fn new() -> Self {
-        CommandServiceImpl {}
+impl<C> CommandServiceImpl<C>
+where
+    C: StorageRepository + Clone + Send + Sync + 'static,
+{
+    pub fn new(storage: C) -> Self {
+        CommandServiceImpl { storage }
     }
 }
 
-impl CommandService for CommandServiceImpl {
+impl<C> CommandService for CommandServiceImpl<C>
+where
+    C: StorageRepository + Clone + Send + Sync + 'static,
+{
     async fn execute_protocol_command(
         &self,
         state: Arc<tokio::sync::Mutex<TransferState>>,
@@ -34,6 +45,7 @@ impl CommandService for CommandServiceImpl {
                     expected_blocks
                 );
                 *state_guard = TransferState::Receiving {
+                    current_file: _filename.clone(),
                     expected_blocks,
                     focused_block: None,
                     received_blocks: Vec::with_capacity(expected_blocks as usize),
@@ -45,18 +57,25 @@ impl CommandService for CommandServiceImpl {
             }
             ProtocolMessage::Yeet(yeet_block) => {
                 let mut state_guard = state.lock().await;
-                let (expected_blocks, focused_block, received_blocks) = match &mut *state_guard {
-                    TransferState::Receiving {
-                        expected_blocks,
-                        focused_block,
-                        received_blocks,
-                    } => (expected_blocks, focused_block, received_blocks),
-                    _ => {
-                        return Err(CommandError::ExecutionFailed(
-                            "Error transfer state is not equal Receiving".to_string(),
-                        ));
-                    }
-                };
+                let (expected_blocks, focused_block, received_blocks, current_file) =
+                    match &mut *state_guard {
+                        TransferState::Receiving {
+                            expected_blocks,
+                            focused_block,
+                            received_blocks,
+                            current_file,
+                        } => (
+                            expected_blocks,
+                            focused_block,
+                            received_blocks,
+                            current_file,
+                        ),
+                        _ => {
+                            return Err(CommandError::ExecutionFailed(
+                                "Error transfer state is not equal Receiving".to_string(),
+                            ));
+                        }
+                    };
 
                 // Ensure we don't exceed the expected number of blocks.
                 if received_blocks.len() >= *expected_blocks as usize {
@@ -77,6 +96,7 @@ impl CommandService for CommandServiceImpl {
 
                 // Reuse the mutable guard to update the state without locking again.
                 *state_guard = TransferState::Receiving {
+                    current_file: current_file.clone(),
                     expected_blocks: *expected_blocks,
                     focused_block: Some(yeet_block.clone()),
                     received_blocks: received_blocks.clone(),
@@ -84,10 +104,22 @@ impl CommandService for CommandServiceImpl {
 
                 drop(state_guard);
 
-                Ok(ProtocolMessage::Ok)
+                Ok(ProtocolMessage::OkHousten(yeet_block.index))
             }
             ProtocolMessage::MissionAccomplished => {
                 let mut state_guard = state.lock().await;
+                let current_file = match &*state_guard {
+                    TransferState::Receiving { current_file, .. } => current_file,
+                    _ => {
+                        return Err(CommandError::ExecutionFailed(
+                            "Error transfer state is not equal Receiving".to_string(),
+                        ));
+                    }
+                };
+
+                self.storage.finalize(current_file).await.map_err(|e| {
+                    CommandError::ExecutionFailed(format!("Storage error: {:?}", e))
+                })?;
                 *state_guard = TransferState::Finished;
                 drop(state_guard);
                 Ok(ProtocolMessage::Success)
@@ -98,5 +130,57 @@ impl CommandService for CommandServiceImpl {
             }
             _ => Err(CommandError::InvalidCommand),
         }
+    }
+
+    async fn process_binary_data(
+        &self,
+        state: Arc<tokio::sync::Mutex<TransferState>>,
+        data: &[u8],
+    ) -> Result<(), CommandError> {
+        let mut state_guard = state.lock().await;
+        let (expected_blocks, focused_block, received_blocks, current_file) =
+            match &mut *state_guard {
+                TransferState::Receiving {
+                    expected_blocks,
+                    focused_block,
+                    received_blocks,
+                    current_file,
+                } => (
+                    expected_blocks,
+                    focused_block,
+                    received_blocks,
+                    current_file,
+                ),
+                _ => {
+                    return Err(CommandError::ExecutionFailed(
+                        "Error transfer state is not equal Receiving".to_string(),
+                    ));
+                }
+            };
+        if let Some(focused_block) = focused_block {
+            if received_blocks.contains(&focused_block.index) {
+                println!("Block {} already received, ignoring.", focused_block.index);
+            } else {
+                println!("Stored binary data block: {:?}", focused_block);
+                self.storage
+                    .write_block(current_file, focused_block, data)
+                    .await
+                    .map_err(|e| {
+                        CommandError::ExecutionFailed(format!("Storage error: {:?}", e))
+                    })?;
+
+                received_blocks.push(focused_block.index);
+                *state_guard = TransferState::Receiving {
+                    current_file: current_file.clone(),
+                    expected_blocks: *expected_blocks,
+                    focused_block: None,
+                    received_blocks: received_blocks.clone(),
+                };
+            }
+        } else {
+            println!("No focused block to store data for.");
+        }
+
+        Ok(())
     }
 }
